@@ -1,6 +1,6 @@
-# aromo-mobile
+# vue-example
 
-> Aromo mobile
+> Vue Example
 
 ## Build Setup
 
