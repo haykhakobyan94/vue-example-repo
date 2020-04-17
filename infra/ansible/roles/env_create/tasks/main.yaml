@@ -1,0 +1,76 @@
+# Requires DEPLOY_BASE_DIR, ENV_TYPE, PROJECT_NAME, env_domain_prefix, EXTRA_DOMAINS, USE_EXTRA_DOMAINS env variable
+# Make by `--extra-vars "DEPLOY_BASE_DIR=$DEPLOY_BASE_DIR ENV_TYPE=$ENV_TYPE PROJECT_NAME=$PROJECT_NAME env_domain_prefix=$env_domain_prefix EXTRA_DOMAINS=$EXTRA_DOMAINS USE_EXTRA_DOMAINS=$USE_EXTRA_DOMAINS"` by ansible run
+# Can also use {{ PROJECT_NAME }}, but don't use for now.
+
+- name: Write systemd service
+  template:
+    src: '{{ item.src }}'
+    dest: '{{ item.dest }}'
+  with_items:
+    - { src: 'scentbook-env-front.service.j2', dest: '/etc/systemd/system/{{ env_name }}.service' }
+  register: systemd_service
+
+- name: Systemd daemon reload
+  systemd:
+    daemon_reload: yes
+  when: systemd_service.changed
+
+- name: Systemd daemon start and enable
+  systemd:
+    name: '{{ env_name }}'
+    enabled: yes
+    state: started
+
+# dev-user environment uses paid wildcard SAN certificate because of limit 50 certificates per domain per week
+# (https://letsencrypt.org/docs/rate-limits/), all others use free certificates.
+- name: Generate TLS certificate
+  block:
+
+    - name: Check if required certificate already exists.
+      stat:
+        path: /etc/letsencrypt/live/{{ env_domain_prefix }}aromo.ru/cert.pem
+      register: domain_certificate
+
+    - name: Write initial configs (first time)
+      template:
+        src: '{{ item.src }}'
+        dest: '{{ item.dest }}'
+      with_items:
+        - { src: 'nginx-scentbook-env-front.conf.j2', dest: '/etc/nginx/conf.d/{{ env_name }}.conf' }
+      when: not domain_certificate.stat.exists
+
+    - name: Temporary remove lines with not existent yet certificates
+      lineinfile:
+        dest: '/etc/nginx/conf.d/{{ env_name }}.conf'
+        state: absent
+        regexp: '^\s*(ssl_certificate|ssl_certificate_key|ssl_trusted_certificate|include|ssl_dhparam) /etc/letsencrypt'
+      when: not domain_certificate.stat.exists
+
+    - name: Dev - Obtain TLS certificates
+      command: >
+        certbot certonly --nginx --email vanav-root@vanav.org --agree-tos --noninteractive --no-redirect --staple-ocsp
+          --cert-name {{ env_domain_prefix }}aromo.ru
+          --domains {{ env_domain_prefix }}aromo.ru,{{ env_domain_prefix }}scentbook.com
+      when:
+        - env_domain_prefix != ""
+        - not domain_certificate.stat.exists
+
+    - name: Prod - Obtain TLS certificates
+      command: >
+        certbot certonly --nginx --email vanav-root@vanav.org --agree-tos --noninteractive --no-redirect --staple-ocsp
+          --cert-name new.aromo.ru
+          --domains new.aromo.ru,new.scentbook.com
+      when:
+        - env_domain_prefix == ""
+        - not domain_certificate.stat.exists
+
+  when:
+    - env_type != "dev-user"
+
+- name: Deploy virtual hosts config (final, original files, second time)
+  template:
+    src: '{{ item.src }}'
+    dest: '{{ item.dest }}'
+  with_items:
+    - { src: 'nginx-scentbook-env-front.conf.j2', dest: '/etc/nginx/conf.d/{{ env_name }}.conf' }
+  notify: reload nginx

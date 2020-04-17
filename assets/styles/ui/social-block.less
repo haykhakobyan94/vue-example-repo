@@ -1,0 +1,55 @@
+.social-block {
+    display: flex;
+    justify-content: center;
+
+    &_auth {
+        padding: pxToRem(10) 0 pxToRem(10);
+    }
+
+    &__link {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: pxToRem(40);
+        height: pxToRem(40);
+        border-radius: 100px;
+        border: 1px solid @color-black;
+        color: @color-black;
+
+        &:not(:last-child) {
+            margin-right: pxToRem(16);
+        }
+
+        &_{
+
+            &big {
+                width: pxToRem(44);
+                height: pxToRem(44);
+            }
+
+            &vk {
+                color: #4C6C91;
+                border: 1px solid #4C6C91;
+            }
+
+            &fb {
+                color: #3B5998;
+                border: 1px solid #3B5998;
+            }
+
+            &gmail {
+                border: 1px solid #B0B0B0;
+            }
+
+            &twitter {
+                border: 1px solid #55ACEE;
+            }
+
+            &ok {
+                border: 1px solid #F68634;
+            }
+
+        }
+
+    }
+}

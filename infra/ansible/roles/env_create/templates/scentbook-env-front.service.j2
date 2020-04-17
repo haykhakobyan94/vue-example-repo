@@ -1,0 +1,17 @@
+[Unit]
+Description={{ env_name }}
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+User=www-data
+Group=nginx
+UMask=0002
+RuntimeDirectory=nuxt
+WorkingDirectory={{ env_base_dir }}/current
+ExecStart=/usr/bin/npm start -- --unix-socket /run/nuxt/{{ env_name }}.sock
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

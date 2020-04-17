@@ -1,0 +1,239 @@
+variables:
+  TZ: MSK-3
+  dev_host: 172.31.41.62
+  prod_host: 185.137.232.13
+
+cache:
+  paths:
+    - vendor/
+
+stages:
+  - deploy_aromo
+  - cleanup_env
+
+
+.deploy_environment: &deploy_environment
+  stage: deploy_aromo
+  tags:
+    - aromo
+  image:
+    name: diodonfrost/ubuntu-18.04-ansible:latest
+    entrypoint: ['']
+  script: |
+    set -o errexit -o errtrace -o pipefail
+    trap "echo \"Aborting due to errexit on line $LINENO. Exit code: $?\" >&2" ERR
+
+    # Environment variables: env_name
+    : "${deployer_user:=deployer}" "${webserver_user:=www-data}" "${python:=/usr/bin/python3}"
+    server=$deploy_host
+    directory=$env_base_dir
+
+    new_env=$(date +%F_%H-%M-%S%z)
+    srv=$deployer_user@$server
+
+    echo "=== $(date --rfc-3339=s). $srv: copy previous source."
+    ssh $srv '
+      set -o errexit -o errtrace -o pipefail
+      trap "echo \"Aborting due to errexit on line $LINENO. Exit code: $?\" >&2" ERR
+
+      new_env="'$new_env'"; directory="'$directory'"; webserver_user="'$webserver_user'"
+      if [[ ! -d "$directory" ]]; then
+        mkdir -p $directory
+        chmod g+s $directory
+        chown :$webserver_user $directory
+        mkdir $directory/releases
+      fi
+      cd $directory
+
+      # Preserve previous configs and cache.
+      src="$directory/current"
+      [[ ! -d "$src" ]] && src="$directory/in_progress"
+      if [[ -d $src ]]; then
+        rsync -ax --delete \
+          --exclude /.git/ \
+          $src/ releases/$new_env/
+      fi
+        
+      # Cleanup old in_progress.
+      IN_PROGRESS_RM=$(realpath --canonicalize-existing -q in_progress) || true
+      ((${#IN_PROGRESS_RM} > 30)) &&
+        [[ "$IN_PROGRESS_RM" != "$(realpath --canonicalize-existing current)" ]] &&
+        rm -r $IN_PROGRESS_RM || true
+
+      # New in_progress.
+      ln -sfn -v releases/$new_env in_progress
+    '
+
+    echo "=== $(date --rfc-3339=s). Copy new source to $srv:$directory/releases/$new_env"
+    rsync -axz --no-perms --no-g --chmod=ugo=rwX --omit-dir-times --delete \
+      --exclude /.git/ \
+      ./ $srv:$directory/releases/$new_env/
+
+    echo "=== $(date --rfc-3339=s). $srv: install dependences and update server."
+    ssh $srv '
+      set -o errexit -o errtrace -o pipefail
+      trap "echo \"Aborting due to errexit on line $LINENO. Exit code: $?\" >&2" ERR
+
+      new_env="'$new_env'"; directory="'$directory'"; env_type="'$env_type'"; env_name="'$env_name'"
+      revert_current() {
+        echo "=== $(date --rfc-3339=s). Operation failed. Reverting \"current\" symlink switch"
+        cd $directory
+        [[ -d $CURRENT ]] && ln -sfn -v $CURRENT current_new && mv -T current_new current
+        false
+      }
+
+      cd $directory/releases/$new_env
+
+      echo "=== $(date --rfc-3339=s). npm install"
+      # TODO: doesn’t build with: export NODE_ENV=production
+      # "modernizr: not found" "Cannot find module @nuxtjs/eslint-module"
+      npm install
+      echo "=== $(date --rfc-3339=s). npm run build"
+      npm run build
+
+      echo "=== $(date --rfc-3339=s). Switch \"current\" symlink"
+      cd $directory
+      CURRENT=$(readlink current) || true
+      PREVIOUS=$(readlink previous) || true
+      PREVIOUS2=$(readlink previous2) || true
+      ln -sfn -v releases/$new_env current_new
+      mv -T current_new current
+      cd current
+
+      echo "=== $(date --rfc-3339=s). Restart service, if any"
+      sudo systemctl restart $env_name || true
+
+      echo "=== $(date --rfc-3339=s). Switch previous versions symlinks and cleanup"
+      cd $directory
+      [[ $PREVIOUS ]] && ln -sfn -v $PREVIOUS previous2
+      [[ $CURRENT ]] && ln -sfn -v $CURRENT previous
+      rm in_progress
+
+      if [[ $env_type == "prod" ]]; then
+        comm -23 \
+          <(find releases -mindepth 1 -maxdepth 1 -type d -mtime +4 -printf "%p\n" | sort) \
+          <(realpath --canonicalize-existing --relative-to . current previous* | sort) \
+          | head -n -2 | xargs -I{} --no-run-if-empty --verbose find $directory/{} -delete
+      else
+        comm -23 \
+          <(find releases -mindepth 1 -maxdepth 1 -type d -printf "%p\n" | sort) \
+          <(realpath --canonicalize-existing --relative-to . current previous* | sort) \
+          | xargs -I{} --no-run-if-empty --verbose find $directory/{} -delete
+      fi
+    '
+    echo "=== $(date --rfc-3339=s). Ansible: setup service and Nginx"
+    cd infra/ansible
+    chmod -R o-w .
+    ansible-playbook --inventory "${deploy_host}," --extra-vars \
+      "env_type=$env_type env_base_dir=$env_base_dir env_domain_prefix=$env_domain_prefix env_name=$env_name ansible_python_interpreter=$python" \
+      env_create.yaml
+
+
+ScentBook front - deploy user dev environment:
+  except:
+    - production
+    - master
+    - staging
+    - schedules
+  variables:
+    deploy_host: "${dev_host}"
+    env_base_dir: "/srv/scentbook-${CI_COMMIT_REF_SLUG}/front"
+    env_type: dev-user
+    env_domain_prefix: ${CI_COMMIT_REF_SLUG}.dev.new.
+    env_name: scentbook-${CI_COMMIT_REF_SLUG}-front
+  environment:
+    name: ${GITLAB_USER_LOGIN}/${CI_COMMIT_REF_SLUG}
+    url: https://${CI_COMMIT_REF_SLUG}.dev.new.aromo.ru
+    on_stop: ScentBook front - cleanup user dev environment
+  <<: *deploy_environment
+
+ScentBook front - deploy stage environment:
+  only:
+    - staging
+  except:
+    - schedules
+  variables:
+    deploy_host: "${dev_host}"
+    env_base_dir: "/srv/scentbook-stage/front"
+    env_type: dev
+    env_domain_prefix: stage.new.
+    env_name: scentbook-stage-front
+  environment:
+    name: stage
+    url: https://stage.new.aromo.ru
+  <<: *deploy_environment
+
+ScentBook front - deploy production environment:
+  only:
+    - master
+  except:
+    - schedules
+  variables:
+    deploy_host: "${prod_host}"
+    env_base_dir: "/srv/scentbook-prod/front"
+    env_type: prod
+    env_domain_prefix: new.
+    env_name: scentbook-prod-front
+  environment:
+    name: production
+    url: https://new.aromo.ru
+  <<: *deploy_environment
+
+
+.cleanup_user_dev_environment: &cleanup_user_dev_environment
+  stage: cleanup_env
+  tags:
+    - aromo
+  image:
+    name: diodonfrost/ubuntu-18.04-ansible:latest
+    entrypoint: ['']
+  script: |
+    set -o errexit -o errtrace -o pipefail
+    trap "echo \"Aborting due to errexit on line $LINENO. Exit code: $?\" >&2" ERR
+
+    : "${deployer_user:=deployer}" "${webserver_user:=www-data}" "${python:=/usr/bin/python3}"
+    server=$deploy_host
+    directory=$env_base_dir
+
+    new_env=$(date +%F_%H-%M-%S%z)
+    srv=$deployer_user@$server
+
+    echo "=== $(date --rfc-3339=s). Ansible: delete service and Nginx config"
+    cd infra/ansible
+    chmod -R o-w .
+    ansible-playbook --inventory "${deploy_host}," --extra-vars \
+      "env_type=$env_type env_base_dir=$env_base_dir env_domain_prefix=$env_domain_prefix env_name=$env_name ansible_python_interpreter=$python" \
+      env_destroy.yaml
+
+    ssh $srv '
+      set -o errexit -o errtrace -o pipefail
+      trap "echo \"Aborting due to errexit on line $LINENO. Exit code: $?\" >&2" ERR
+
+      env_base_dir="'$env_base_dir'"
+
+      find $env_base_dir/ -delete
+      # Delete parent directory only if it is empty.
+      rmdir $env_base_dir/.. || true
+    '
+
+ScentBook front - cleanup user dev environment:
+  only:
+    - branches
+  except:
+    - production
+    - master
+    - staging
+    - schedules
+  when: manual
+  variables:
+    git_strategy: none
+    deploy_host: "${dev_host}"
+    env_base_dir: "/srv/scentbook-${CI_COMMIT_REF_SLUG}/front"
+    env_type: dev-user
+    env_domain_prefix: ${CI_COMMIT_REF_SLUG}.dev.new.
+    env_name: scentbook-${CI_COMMIT_REF_SLUG}-front
+  environment:
+    name: ${GITLAB_USER_LOGIN}/${CI_COMMIT_REF_SLUG}
+    url: https://${CI_COMMIT_REF_SLUG}.aromo.ru
+    action: stop
+  <<: *cleanup_user_dev_environment

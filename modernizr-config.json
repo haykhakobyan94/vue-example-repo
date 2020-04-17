@@ -1,0 +1,15 @@
+{
+	"minify": true,
+	"options": [
+		"mq",
+		"prefixed",
+		"prefixedCSS",
+		"html5printshiv",
+		"html5shiv",
+		"setClasses"
+	],
+	"feature-detects": [
+		"test/img/webp",
+		"test/svg/inline"
+	]
+}

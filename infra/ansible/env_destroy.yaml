@@ -1,0 +1,6 @@
+# Requires ENV_PREFIX, PROJECT_NAME env variable
+# Make by `--extra-vars "ENV_PREFIX=$ENV_PREFIX PROJECT_NAME=$PROJECT_NAME"` by ansible run
+- name: Delete environment
+  hosts: all
+  roles:
+    - env_destroy

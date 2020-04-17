@@ -1,0 +1,20 @@
+.generate-spaces(@n, @i: 4) when (@i =< @n) {
+  .mt-@{i} {
+    margin-top: rem(@i);
+  }
+  .ml-@{i} {
+    margin-left: rem(@i);
+  }
+  .mr-@{i} {
+    margin-right: rem(@i);
+  }
+  .pt-@{i} {
+    padding-top: rem(@i);
+  }
+  .pl-@{i} {
+    padding-left: rem(@i);
+  }
+  .generate-spaces(@n, (@i + 4));
+}
+
+.generate-spaces(48);

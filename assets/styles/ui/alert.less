@@ -1,0 +1,38 @@
+.ui-alert{
+    width: 100vw;
+    top: 0!important;
+    background: rgba(108, 108, 108, .92);
+    border: 0;
+    color: @color-white;
+    padding: pxToRem(16) pxToRem(40);
+    border-radius: 0;
+
+    &_success{
+        background: rgba(33, 133, 87, .92);
+    }
+
+    &_error{
+        background: rgba(164, 35, 26, .92);
+    }
+
+    &__icon{
+        display: none;
+    }
+
+    .el-message{
+        &__content{
+            padding: 0;
+            font-size: pxToRem(16);
+            max-width: pxToRem(900);
+            word-wrap: break-word;
+            line-height: 150%;
+            text-align: center;
+        }
+
+        &__closeBtn{
+            color: @color-white;
+            right: pxToRem(15);
+            font-size: pxToRem(18);
+        }
+    }
+}

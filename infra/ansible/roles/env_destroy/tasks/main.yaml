@@ -1,0 +1,34 @@
+# Requires DEPLOY_BASE_DIR, ENV_TYPE, PROJECT_NAME, env_domain_prefix, EXTRA_DOMAINS, USE_EXTRA_DOMAINS env variable
+# Make by `--extra-vars "DEPLOY_BASE_DIR=$DEPLOY_BASE_DIR ENV_TYPE=$ENV_TYPE PROJECT_NAME=$PROJECT_NAME env_domain_prefix=$env_domain_prefix EXTRA_DOMAINS=$EXTRA_DOMAINS USE_EXTRA_DOMAINS=$USE_EXTRA_DOMAINS"` by ansible run
+# Can also use {{ PROJECT_NAME }}, but don't use for now.
+
+- name: Delete nginx for environment
+  file:
+    path: "/etc/nginx/conf.d/{{ env_name }}.conf"
+    state: absent
+  register: nginx_config
+  notify: reload nginx
+
+- name: Delete TLS certificates
+  command: >
+    certbot delete --cert-name {{ env_domain_prefix }}aromo.ru
+  when:
+    - env_type != "dev-user"
+
+
+- name: Systemd daemon stop and disable
+  systemd:
+    name: '{{ env_name }}'
+    state: stopped
+    enabled: no
+
+- name: Delete systemd service for environment
+  file:
+    path: "/etc/systemd/system/{{ env_name }}.service"
+    state: absent
+  register: systemd_service
+
+- name: Systemd daemon reload
+  systemd:
+    daemon_reload: yes
+  when: systemd_service.changed
